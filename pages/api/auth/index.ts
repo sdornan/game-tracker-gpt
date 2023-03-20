@@ -1,17 +1,23 @@
-import { Redis } from '@upstash/redis'
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb'
 import { OAuth2Client, TokenPayload } from 'google-auth-library'
 import { NextApiRequest, NextApiResponse } from 'next'
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
+const oAuth2Client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID)
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-})
+const dynamoDb = new DynamoDBClient({})
+const ddbDocClient = DynamoDBDocumentClient.from(dynamoDb)
+
+type AuthRequest = {
+  idToken: string
+  accessToken: string
+  issuedAt: number
+  expiresIn: number
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
-    let userId
+    let userId: string
 
     if (!req.body.idToken) {
       res.status(400).json({ message: 'Missing idToken parameter' })
@@ -23,14 +29,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return
     }
 
+    if (!req.body.issuedAt) {
+      res.status(400).json({ message: 'Missing issuedAt parameter' })
+    }
+
+    if (!req.body.expiresIn) {
+      res.status(400).json({ message: 'Missing expiresIn parameter' })
+    }
+
+    const { idToken, accessToken, issuedAt, expiresIn } = req.body as AuthRequest
+
     try {
-      const ticket = await client.verifyIdToken({
-        idToken: req.body.idToken,
+      const ticket = await oAuth2Client.verifyIdToken({
+        idToken,
         audience: process.env.GOOGLE_CLIENT_ID,
       })
       const payload = ticket.getPayload() as TokenPayload
 
-      userId = payload['sub']
+      userId = payload.sub
     } catch (error) {
       res.status(401).json({ message: 'Invalid token' })
       return
@@ -38,10 +54,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // If they get this far, they're authenticated
 
-    const accessToken = req.body.accessToken
+    // Store access token until expiration
+    const expiresAt = issuedAt + expiresIn
 
-    // Store access token for one day
-    redis.setex(`accessToken:${accessToken}`, 60 * 60 * 24, userId)
+    const params = {
+      TableName: process.env.ACCESS_TOKEN_TABLE_NAME,
+      Item: {
+        accessToken,
+        userId,
+        expiresAt,
+      },
+    }
+
+    const command = new PutCommand(params)
+
+    await ddbDocClient.send(command)
 
     res.status(200).json({ userId })
   }

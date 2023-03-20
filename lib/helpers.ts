@@ -1,10 +1,9 @@
-import { Redis } from '@upstash/redis'
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
+import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb'
 import { NextApiRequest, NextApiResponse } from 'next'
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
-})
+const dynamoDb = new DynamoDBClient({})
+const ddbDocClient = DynamoDBDocumentClient.from(dynamoDb)
 
 export const withAuth = (handler: any) => async (req: NextApiRequest, res: NextApiResponse) => {
   const authHeader = req.headers.authorization
@@ -16,9 +15,18 @@ export const withAuth = (handler: any) => async (req: NextApiRequest, res: NextA
     return
   }
 
-  const userId = await redis.get(`accessToken:${accessToken}`)
+  const params = {
+    TableName: process.env.ACCESS_TOKEN_TABLE_NAME,
+    Key: {
+      accessToken,
+    },
+  }
 
-  console.log(userId)
+  const command = new GetCommand(params)
+
+  const { Item } = await ddbDocClient.send(command)
+
+  const userId = Item?.userId
 
   if (!userId) {
     res.status(401).json({ message: 'Invalid access token' })

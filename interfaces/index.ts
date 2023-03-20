@@ -8,3 +8,5 @@ export type User = {
 export type ResponseError = {
   message: string
 }
+
+export type CollectionStatus = 'playing' | 'paused' | 'completed' | 'abandoned' | 'wishlist'
