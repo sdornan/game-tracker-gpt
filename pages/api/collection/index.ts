@@ -3,10 +3,14 @@ import { withAuth } from '@/lib/helpers'
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb'
 import {
   DeleteCommand,
+  DeleteCommandInput,
   DynamoDBDocumentClient,
   PutCommand,
+  PutCommandInput,
   QueryCommand,
+  QueryCommandInput,
   UpdateCommand,
+  UpdateCommandInput,
 } from '@aws-sdk/lib-dynamodb'
 import { NextApiRequest, NextApiResponse } from 'next'
 
@@ -23,126 +27,121 @@ type DeleteCollectionRequest = {
   gameId: string
 }
 
+const getCollection = async (userId: string) => {
+  const params: QueryCommandInput = {
+    TableName: process.env.COLLECTION_TABLE_NAME,
+    KeyConditionExpression: 'userId = :userId',
+    ExpressionAttributeValues: {
+      ':userId': userId,
+    },
+  }
+
+  const command = new QueryCommand(params)
+  return ddbDocClient.send(command)
+}
+
+const addGameToCollection = async (userId: string, body: UpdateCollectionRequest) => {
+  const { gameId, rating, status } = body
+
+  const params: PutCommandInput = {
+    TableName: process.env.COLLECTION_TABLE_NAME,
+    Item: {
+      userId,
+      gameId,
+      rating: rating || null,
+      status: status || null,
+    },
+  }
+
+  const command = new PutCommand(params)
+  return ddbDocClient.send(command)
+}
+
+const updateGameInCollection = async (userId: string, body: UpdateCollectionRequest) => {
+  const { gameId, rating, status } = body
+
+  // Initialize update expression, attribute names, and attribute values
+  let updateExpression = 'SET'
+  const expressionAttributeNames: { [key: string]: string } = {}
+  const expressionAttributeValues: { [key: string]: any } = {}
+
+  // Add the rating attribute if it's defined
+  if (rating) {
+    updateExpression += ' #rating = :rating,'
+    expressionAttributeNames['#rating'] = 'rating'
+    expressionAttributeValues[':rating'] = rating
+  }
+
+  // Add the status attribute if it's defined
+  if (status) {
+    updateExpression += ' #status = :status,'
+    expressionAttributeNames['#status'] = 'status'
+    expressionAttributeValues[':status'] = status
+  }
+
+  // Remove the trailing comma
+  updateExpression = updateExpression.slice(0, -1)
+
+  const params: UpdateCommandInput = {
+    TableName: process.env.COLLECTION_TABLE_NAME,
+    Key: {
+      userId,
+      gameId,
+    },
+    UpdateExpression: updateExpression,
+    ExpressionAttributeNames: expressionAttributeNames,
+    ExpressionAttributeValues: expressionAttributeValues,
+    ReturnValues: 'ALL_NEW',
+  }
+
+  const command = new UpdateCommand(params)
+  return ddbDocClient.send(command)
+}
+
+const deleteGameFromCollection = async (userId: string, body: DeleteCollectionRequest) => {
+  const { gameId } = body
+
+  const params: DeleteCommandInput = {
+    TableName: process.env.COLLECTION_TABLE_NAME,
+    Key: {
+      userId,
+      gameId,
+    },
+  }
+
+  const command = new DeleteCommand(params)
+  return ddbDocClient.send(command)
+}
+
 async function handler(
   req: NextApiRequest,
   res: NextApiResponse<any | ResponseError>,
   userId: string
 ) {
-  if (req.method === 'GET') {
-    const params = {
-      TableName: process.env.COLLECTION_TABLE_NAME,
-      KeyConditionExpression: 'userId = :userId',
-      ExpressionAttributeValues: {
-        ':userId': userId,
-      },
+  try {
+    switch (req.method) {
+      case 'GET':
+        const { Items: games } = await getCollection(userId)
+        res.status(200).json(games)
+        break
+      case 'POST':
+        const addedGame = await addGameToCollection(userId, req.body)
+        res.status(201).json(addedGame)
+        break
+      case 'PUT':
+        const updatedGame = await updateGameInCollection(userId, req.body)
+        res.status(200).json(updatedGame)
+        break
+      case 'DELETE':
+        await deleteGameFromCollection(userId, req.body)
+        res.status(200).json({ message: 'Game deleted from collection' })
+        break
+      default:
+        res.setHeader('Allow', ['GET', 'POST', 'PUT', 'DELETE'])
+        res.status(405).end(`Method ${req.method} Not Allowed`)
     }
-
-    try {
-      const command = new QueryCommand(params)
-      const result = await ddbDocClient.send(command)
-      res.status(200).json(result.Items)
-    } catch (error) {
-      res.status(500).json({ message: 'Error fetching collection' })
-    }
-  } else if (req.method === 'POST') {
-    const { gameId, rating, status } = req.body as UpdateCollectionRequest
-
-    if (!gameId) {
-      res.status(400).json({ message: 'Missing gameId' })
-      return
-    }
-
-    const params = {
-      TableName: process.env.COLLECTION_TABLE_NAME as string,
-      Item: {
-        userId,
-        gameId,
-        rating: rating || null,
-        status: status || null,
-      },
-    }
-
-    try {
-      const command = new PutCommand(params)
-      await ddbDocClient.send(command)
-      res.status(201).json({ gameId, rating, status })
-    } catch (error) {
-      res.status(500).json({ message: 'Error adding game to collection' })
-    }
-  } else if (req.method === 'PUT') {
-    const { gameId, rating, status } = req.body as UpdateCollectionRequest
-
-    if (!gameId) {
-      res.status(400).json({ message: 'Missing gameId' })
-      return
-    }
-
-    // Initialize update expression, attribute names, and attribute values
-    let updateExpression = 'SET'
-    const expressionAttributeNames: { [key: string]: string } = {}
-    const expressionAttributeValues: { [key: string]: any } = {}
-
-    // Add the rating attribute if it's defined
-    if (rating) {
-      updateExpression += ' #rating = :rating,'
-      expressionAttributeNames['#rating'] = 'rating'
-      expressionAttributeValues[':rating'] = rating
-    }
-
-    // Add the status attribute if it's defined
-    if (status) {
-      updateExpression += ' #status = :status,'
-      expressionAttributeNames['#status'] = 'status'
-      expressionAttributeValues[':status'] = status
-    }
-
-    // Remove the trailing comma
-    updateExpression = updateExpression.slice(0, -1)
-
-    const params = {
-      TableName: process.env.COLLECTION_TABLE_NAME as string,
-      Key: {
-        userId,
-        gameId,
-      },
-      UpdateExpression: updateExpression,
-      ExpressionAttributeNames: expressionAttributeNames,
-      ExpressionAttributeValues: expressionAttributeValues,
-      ReturnValues: 'ALL_NEW',
-    }
-
-    console.log(params)
-
-    try {
-      const command = new UpdateCommand(params)
-      await ddbDocClient.send(command)
-      res.status(200).json({ gameId, rating, status })
-    } catch (error) {
-      res.status(500).json({ message: 'Error updating game in collection' })
-    }
-  } else if (req.method === 'DELETE') {
-    const { gameId } = req.body as DeleteCollectionRequest
-
-    if (!gameId) {
-      res.status(400).json({ message: 'Missing gameId' })
-      return
-    }
-
-    const params = {
-      TableName: process.env.COLLECTION_TABLE_NAME,
-      Key: {
-        userId,
-        gameId,
-      },
-    }
-
-    try {
-      const command = new DeleteCommand(params)
-      await ddbDocClient.send(command)
-      res.status(204)
-    } catch (error) {
-      res.status(500).json({ message: 'Error deleting game from collection' })
-    }
+  } catch (error) {
+    res.status(500).json({ message: 'An error occurred' })
   }
 }
 
