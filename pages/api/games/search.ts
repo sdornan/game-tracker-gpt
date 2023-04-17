@@ -1,4 +1,6 @@
+import { IgdbGame } from '@/interfaces'
 import { fetchTwitchAppAccessToken } from '@/lib/helpers'
+import { AxiosResponse } from 'axios'
 import igdb from 'igdb-api-node'
 import { NextApiRequest, NextApiResponse } from 'next'
 import relevancy from 'relevancy'
@@ -22,15 +24,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const _makeIgdbRequest = async () => {
       const client = igdb(process.env.TWITCH_CLIENT_ID, twitchAppAccessToken)
 
-      const response = await client
+      const response = (await client
         .fields(['id', 'name', 'slug', 'rating_count', 'cover.image_id'])
         .where('category = (0,8,10) & version_parent = null')
         .search(name)
-        .request('/games')
+        .request('/games')) as AxiosResponse<IgdbGame[]>
 
       response.data = response.data.map((g) => ({
         ...g,
-        relevancy: relevancy.weight(name, g.name),
+        relevancy: relevancy.weight(name, g.name) as number,
       }))
 
       response.data.sort((a, b) => (b.rating_count || 0) - (a.rating_count || 0))

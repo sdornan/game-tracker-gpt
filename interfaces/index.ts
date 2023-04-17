@@ -10,3 +10,14 @@ export type ResponseError = {
 }
 
 export type CollectionStatus = 'playing' | 'paused' | 'completed' | 'abandoned' | 'wishlist'
+
+export type IgdbGame = {
+  id: number
+  name: string
+  slug: string
+  rating_count: number
+  cover: {
+    image_id: string
+  }
+  relevancy?: number
+}
